@@ -1,0 +1,1263 @@
+---
+title: "Movie Recommendation System"
+author: "Moschos Evangelos-Jason"
+abstract: "In this document, we are presenting our analysis on a movie recommendation system, based on the famous Movielens dataset. The project is conducted for the Harvard Data science professional program."
+bibliography: bibliography.bibtex
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+```
+
+```{r results='hide', echo=FALSE, include=TRUE, message=FALSE, warning=FALSE}
+
+# Install all needed libraries if not there
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("rpart", repos = "http://cran.us.r-project.org")
+if(!require(xgboost)) install.packages("xgboost", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(ggpubr)) install.packages("ggpubr", repos = "http://cran.us.r-project.org")
+if(!require(tinytex)) install.packages("tinytex", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+
+```
+
+```{r results='hide', echo=FALSE, message=FALSE,include=TRUE, warning=FALSE}
+
+## Library loading
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(lubridate)
+library(randomForest)
+library(rpart)
+library(xgboost)
+library(ggplot2)
+library(stringr)
+library(ggpubr)
+library(tinytex)
+library(kableExtra)
+
+```
+
+
+
+\newpage
+
+# Executive summary {-}
+
+Recommendation systems (RS) are becoming increasingly more prevelant in today's world. They are systems that try to predict or filter preferences according to the user's profile and past choices. From Netflix, to Youtube, to Amazon, Recommendation systems are helping millions of users to find content that is interesting to them. 
+
+As part of the Harvard data science program, we will be attempting to create a movie recommendation system, based on the famous MovieLens dataset. The dataset we are using is the one with 10 million rows, downloaded from (https://grouplens.org/datasets/movielens/). The aim of the project is to be able to predict the rating a user might give to a movie (based on some characteristics), in order for us to be able to recommend movies with high predicted ratings to that user. 
+
+In our exploratory analysis, we managed to identify four main variables that appear to drive variability in the rating: namely a movie effect, a time effect, a user-based effect and an effect for the different genres. For each of those variables, a different analysis was conducted, but the interaction between them was not studied explicitly. 
+
+For the movie effect (or movie bias), we examined how the average rating differed between movies. The analysis shows evidence that movies with a higher number of ratings tend to receive higher absolute ratings from the users, while simultaneously movies with a lower number of ratings tend to have a more wide (sparse) distribution. To verify this assumption, we sampled different movies based on the number of ratings and examined their rating distribution. Based on this analysis, we believe that movies have a strong effect on how a user might rate them, which is in-line with our empirical knowledge.
+
+Regarding the user effect (user bias), we examined the number of times a user rates movies, as well as the cumulative distribution of ratings grouped by user, and discovered that while only a small portion of users is having an extremely high number of ratings, the general Pareto rule (80/20) does not appear to hold true for the dataset. Additionally, when sampling individual users, based on their number of ratings, and examining their rating behaviour, there is strong evidence that a user effect is also present in our dataset.
+
+For the time bias, we studied the effect the time variable has on the rating. Our results indicate that time does have a small effect on the average rating, but it is far too volatile to be used directly in our models. For that reason, we created a smoothened curve for the time variable, which was later used for our predictions.
+
+Finally, we attempted to study the effect that individual genres have on user rating. Our approach was twofold: 1) treat genre combinations as unique genres and 2) Split the genre combinations to the individual genres, they consist of. Based on our analysis, we concluded that the first option appeared to have a larger variability, compared to the second, and thus we selected to treat genre combinations as individual genres in our models.
+
+Based on our EDA, we have developed five main models that consider these factors or a combination of them. The best performing model we developed included all four parameters, and it achieved an 
+
+* **RMSE of 0.8631 in the test-set** 
+* **RMSE of 0.8647 in the validation set**.
+
+The analysis shows significant improvement over simpler methods (20% improvement), but several other factors can be incorporated to further improve the accuracy of the model.
+
+
+
+\newpage
+
+# Introduction
+
+The rapid growth of the internet has led to the adoption of an e-business model by many traditional (brick-and-mortar) businesses. A basic requirement for all these businesses is to provide the user with an appropriate assortment of products or services, tailored to the specific needs of each user. Recommendation systems are used to fill that gap; their basic idea and goal is to utilize different sources of data and generate meaningful and accurate predictions for the users.
+
+As part of the Harvard data science professional program, we will attempt to create a movie recommendation system. In the next chapters, our analysis is structured as follows:
+
+* Chapter 2: Literature review
+
+* Chapter 3: Dataset generation 
+
+* Chapter 4: Exploratory Data Analysis 
+
+* Chapter 5: Analysis: Model building & Testing
+
+* Chapter 6: Results: Model assessment & validation
+
+* Chapter 7: Conclusion 
+
+In chapter 2, a brief literature review is provided on recommendation systems; the review focuses only on the classification of techniques for recommendation systems, and their advantages and disadvantages.
+
+In chapter 3, the generation of the dataset is explained, and some basic dimensions of the data are explored.
+
+In chapter 4, an Exploratory data analysis is conducted, to identify interesting features in the dataset, and help us select the appropriate variables in our models.
+
+In chapter 5, the basic models are built, based on the characteristics identified in chapter 4. All the models are also evaluated.
+
+In chapter 6 the best model of chapter 5 is selected and its performance is validated on a new dataset.
+
+In chapter 7, an overview of the results is presented, limitations of the project are discussed, and direction for future research is provided.
+
+\newpage
+# Literature review
+
+Recommendation systems are typically classified into three categories [@isinkaye2015recommendation]: 
+
+* Content-based filtering
+
+* Collaborative filtering
+
+* Hybrid systems
+
+**Content-based filtering systems** (CBF) recommend content based on the user's profile and the attribute of items [@pazzani2007content]. An advantage of such system is that it does not require data from other users and it can capture the taste of each specific user [@rafsanjani2013recommendation]. However, it is not without its limitations; namely, the "Cold start problem", where a user has to first rate an item for the system to make a prediction. Additionally, the fact that the user will only be recommended items based on his existing profile is another major disadvantage [@adomavicius2005toward].
+
+On the other hand, **collaborative filtering systems** (CF) recommend items similar to those selected by other people with similar preferences[@lyle2012recommender]. CF has two main advantages: it does not need any domain knowledge, and it can help users identify new interests [@rafsanjani2013recommendation]. The disadvantage of such recommendation system is twofold: data sparsity and the cold start problem . Data sparsity refers to the fact that many users and item combinations simply do not exist [@lyle2012recommender], while the cold start problem is similar to the one found in Content-based systems: new users must rate an item before a recommendation is made[@thorat2015survey]. 
+
+Collaborative filtering systems can be futher split into Model based and Memory based [@lyle2012recommender]. 
+
+The final category are the **hybrid systems**, which use a combination of the other approaches [@sanchez2013improving], in order to tackle some of the problems faced by the individual approaches (cold start, data sparsity etc.). @thorat2015survey describe the four main approaches for hybrid systems as follows:
+
+* CF and CBF are implemented seperately, and their predictions are aggregated.
+
+* Parts of CBF are integrated into CF.
+
+* Parts of CF are integrated into CBF.
+
+* A new generalized "consolidative model" is created, where both CF and CBF characteristics are integrated.
+
+
+
+\newpage
+# Dataset generation
+
+In this chapter, we will describe the dataset generation process, some useful (general) statistics for the dataset and some first insights we have.
+
+The entire dataset is donwloaded from https://grouplens.org/datasets/movielens/10m/. 
+
+```{r, include = FALSE, eval = TRUE}
+
+
+#Creating the dataset
+
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+```
+
+We begin by examining the different variables
+
+
+
+
+```{r, echo=FALSE, eval = TRUE}
+
+movielens%>%
+  head(5)%>%
+  kable(align=rep('c', ncol(movielens))) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+```
+
+
+There are 6 variables: 
+
+* UserId: indicating the user
+* movieId: indicating the movie
+* rating: the variable we plan to predict: the rating each movie received by a user.
+* timestamp: indicating when was the movie rated.
+* title: the title of the movie
+* genres: indicating the genre 
+
+Some initials first observations we have is that the timestamp is in a format we cannot interpret at the moment and thus need to be converted. Furthermore, the genres are all in one row, seperated by "|".
+
+We will now examine how many rows our dataset has, and how many unique users and movies exist.
+
+Number of rows:
+```{r, echo=FALSE, results= "Number of rows", eval = TRUE}
+nrow(movielens)
+
+```
+
+Number of unique users:
+```{r, echo=FALSE, results= "Number of unique users",eval = TRUE}
+length(unique(movielens$userId))
+```
+
+Number of unique movies:
+```{r, echo=FALSE, results= "Number of unique users",eval = TRUE}
+length(unique(movielens$movieId))
+```
+
+The dataset itself is rather large with 10.000.000 datapoints, and almost 70.000 users and 11.000 movies. 
+In fact, the size of the dataset is a prohibiting factor for most Machine learning algorithms (at least in a local setup), as they require immense computational time. 
+
+To assess the data completeness, we are going to check the number of missing values in our dataset.
+```{r, echo=FALSE, eval = TRUE}
+
+
+na_count<-data.frame(sapply(movielens, function(y) sum(length(which(is.na(y))))))
+colnames(na_count)<-"Number of missing values"
+na_count%>%
+  kable(align=rep('c', ncol(movielens))) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+  
+```
+
+It appears that our dataset does not contain any missing values.
+
+Before proceeding to the Exploratory data analysis, in order to be able to assess the quality of our algorithms, we are going to split the original dataset (movielens) into two sets: edx and validation. The edx dataset will be the only one used for all our actions, and validation will only be used at the end to calculate the accuracy of our best algorithm in unseen data. The rule used for the splitting is 90/10 (90% of the data in edx, 10% in validation).
+
+```{r, include = FALSE, eval = TRUE}
+# Validation set will be 10% of MovieLens data
+set.seed(1)
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+```
+
+Finally, we will further split our dataset (edx) into a training and a test set; the training set will be used for fitting our models, and the test set will be used for evaluating them and comparing with each other. We have used a 90/10 split rule, similar to how we constructed the validation set.
+
+```{r, include = FALSE, eval = TRUE}
+## Creating train and test sets for the models from edx dataset. VALIDATION IS NOT TO BE USED.
+## 90-10split for data
+set.seed(1)    ##for reproducability
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+train_set <- edx[-test_index,]
+temp <- edx[test_index,]
+
+# Make sure userId and movieId in test set are also in train set
+test_set <- temp %>% 
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId")
+
+# Add rows removed from test set back into train set
+removed <- anti_join(temp, test_set)
+train_set <- rbind(train_set, removed)
+
+#remove temp columns
+rm(test_index, temp, removed)
+
+```
+
+We now have 3 datasets:
+
+* edx: Used for modelling purposes.
+* train: Used for model comparison.
+* validation: Used, once the best model has been decided, to calculate accuracy in unseen data.
+
+\newpage
+
+# Exploratory Data Analysis 
+
+In this section, we are presenting our exploratory data analysis (EDA). From the variables in our dataset, described in the previous section, the title does not appear to hold any value in our prediction. Therefore, we will only examine the remaining 5 variables. A dedicated section is devoted to each one of them.
+
+## Timestamp analysis
+
+As part of the analysis, we want to study the relationship between the time (timestamp) variable and the rating. Alternatively, the research question can be formulated as: "Do people seem to rate movies differently in different time periods?". From a logical point of view, some periods are associated with better-quality movies, and thus the rating might differ for those periods. We will be attempting to answer this question based on our available data.
+
+Since our dataset has a timestamp variable, which cannot be used directly in that format, we need to convert it to a date variable. Depending on the unit of choice, we expect a different behaviour; due to the pooling effect, aggregating the date more, will result to a more smooth surface. We will test the distribution at a daily, weekly monthly and yearly level.
+
+For our analysis, firstly we convert the timestamp to a date format and subsequently aggregate our data by date. For each date, we plot the aggregated data and also fit a smoothened curve (loess). 
+
+All 4 plots are depicted in the following figure: 
+
+```{r, echo=FALSE,message=FALSE, warning= FALSE, eval = TRUE}
+## 1) Timestamp analysis: Checking if timestamp affects the rating.
+
+##Ploting the average rating by day,week,month and year to see if time plays any role. Using 01/01/1970 as origin
+
+
+## Plotting the avg rating change per day
+t_day<-train_set%>%
+  mutate(day=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="day"))%>%
+  group_by(day)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(day,rating))+
+  geom_line()+
+  geom_smooth(method="loess")+
+  ylim(0,5)
+
+## Plotting the avg rating change per week
+t_week<-train_set%>%
+  mutate(week=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="week"))%>%
+  group_by(week)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(week,rating))+
+  geom_line()+
+  geom_smooth(method="loess")+
+  ylim(0,5)
+
+## Plotting the avg rating change per month
+t_month<-train_set%>%
+  mutate(month=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="month"))%>%
+  group_by(month)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(month,rating))+
+  geom_line()+
+  geom_smooth(method="loess")+
+  ylim(0,5)
+
+## Plotting the avg rating change per year
+t_year<-train_set%>%
+  mutate(year=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="year"))%>%
+  group_by(year)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(year,rating))+
+  geom_line()+
+  geom_smooth(method="loess")+
+  ylim(0,5)
+
+ggarrange(t_day,t_week,t_month,t_year,nrow = 2,ncol=2)
+rm(t_day,t_week,t_month, t_year)
+
+```
+
+
+From the plots we can clearly see that the average rating is not stable across time and thus it appears that the time does have an impact on the average rating.  
+
+We should also note that when the grouping is done at a daily, weekly or monthly level, the resulted time-series object is far too volatile. When however the aggregation is performed at a yearly level, the surface is rather smooth, and the fitted line appears to capture the general trend, while also being close to the original data.
+
+To see this, we are providing the plot with only the yearly level (red), the overall average rating (black) and our fitted line(blue):
+
+```{r, echo= FALSE, warning= FALSE, message=FALSE, eval = TRUE}
+t_year<-train_set%>%
+  mutate(year=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="year"))%>%
+  group_by(year)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(year,rating))+
+  geom_line(col="red")+
+  geom_smooth(method="loess")+
+  geom_hline(yintercept = mean(train_set$rating), col = "black", size = 1.5)+
+  ylim(3,4)
+plot(t_year)
+rm(t_year)
+```
+
+
+Based on this plot, we observe that the average rating, stratified by date (yearly aggregation), is different than the average of the entire dataset, and the fitted line can be used to approximate that effect.
+
+Therefore, we expect the time variable to have an impact in our rating prediction, and thus its effectiveness will be tested in our models.
+
+## User-based analysis
+
+For this section, we aim to study the user effect or user bias. More specifically, different users have different behaviours when rating a movie; some are more positive and give higher ratings, while others do the opposite. 
+
+To begin with, we want to see how many times have different users rated movies. For that reason, we create a histogram with the total number of times users have rated movies, grouped by user.
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Plotting how many times do users rate movies (1-off or multiple times)
+train_set%>%
+  group_by(userId)%>%
+  summarize(count=n())%>%
+  ggplot()+
+  geom_histogram(aes(count))+
+  labs(x = "Number of ratings",
+       y = "Number of users")
+
+```
+
+We observe that most users have a number of ratings less than 2000, but there are some outliers that have rated movies more than 3000 times, as seen in the following table.
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Most times a user has rated movies
+train_set%>%
+  group_by(userId)%>%
+  summarize(count=n())%>%
+  arrange(desc(count))%>%
+  top_n(5)%>%
+   kable(align="c") %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+```
+
+In the literature review, we described the cold start problem, in which we have users who have never rated a movie before. We want to examine if in our dataset a similar problem exists. Thus, we calculate the 5 users with the least reviews: 
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE }
+## Least times a user has rated a movie
+
+train_set%>%
+  group_by(userId)%>%
+  summarize(count=n())%>%
+  arrange(count)%>%
+  head(5)%>%
+  arrange(desc(count))%>%
+  kable(align="c") %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+```
+
+In our dataset, each user has at least 10 reviews, which means that we do not face the cold start problem.
+
+
+We saw earlier that few users have a very high number of reviews and we should test if these users affect the general dataset. Do they capture a big percentage of the overall ratings (as a whole), or do we have balance in our dataset. To answer this question, we are going to create a pareto chart with the number of users and the total ratings of these users:
+
+
+```{r, echo=FALSE, eval = TRUE, warning=FALSE,message=FALSE }
+
+## Pareto-chart to see the cumulative number of ratings for the users
+
+z<-train_set%>%
+  group_by(userId)%>%
+  summarize(n=n())%>%
+  arrange(desc(n))%>%
+  mutate(percentage=n/sum(n))%>%
+  mutate(cumSum=cumsum(percentage))
+
+z$id<-1:length(z$userId)
+
+z%>%
+  ggplot(aes(id,100*cumSum))+
+  geom_line()+
+  labs(title = "Pareto chart between users and cumulative percentage of movie ratings",
+        x = "Cumulative number of users",
+        y = "Cumulative percentage of retings")
+
+rm(z)
+```
+
+From the Pareto chart, we can see that 10.000 users (14% of userbase) are responsible for 50% of the ratings, while 60% of the users are responsible for 80% of the ratings. In theory, Pareto rule is often referred to as thee 80:20 rule (80% of ratings done by 20% of users, and 20% of ratings done by 80% of the users); in our case, the pareto rule does not seem to hold true, and we have a more balanced dataset.
+
+We will now examine how rating is changing for different users. 
+
+We begin by plotting a histogram of the average rating grouped by user along with the overall average rating for all users (red line).
+
+```{r, echo=FALSE, eval = TRUE, warning=FALSE,message=FALSE }
+
+## Plotting average rating distribution by user, and the average rating for all movies (red line)
+train_set%>%
+  group_by(userId)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(rating))+
+  geom_histogram(col="yellow")+
+  geom_vline(xintercept = mean(train_set$rating),col="red",size=2)+
+  labs(title = "Histogram of user rating behaviour",
+       x = "Rating",
+       y= "Number of users")
+```
+
+Based on the plot, we can safely conclude that different users have different behaviours in terms of rating. 
+
+We will now examine how individual users behave, to further illustrate our previous conclusion. We randomly select three users (one with less than 20 ratings (light user), one with more than 100 but less than 500 (medium user) and one with more than 2000 ratings (heavy user)). For each of the user, we plot their unique rating distribution and compare them with each other. 
+
+Our first user with more than 2000 ratings has a userId of:
+
+```{r, echo=FALSE, eval = TRUE, warning=FALSE,message=FALSE }
+heavy_user<-train_set%>%
+  group_by(userId)%>%
+  summarize(n=n())%>%
+  filter(n>2000)%>%
+  filter(row_number()==1)%>%        ## Select first line. We do not aim for anyone specifically -->Selecting the first
+  .$userId
+ 
+heavy_user 
+
+```
+
+For the medium user, the userId is:
+
+```{r, echo=FALSE, eval = TRUE, warning=FALSE,message=FALSE }
+medium_user<-train_set%>%
+  group_by(userId)%>%
+  summarize(n=n())%>%
+  filter(n>100&n<500)%>%
+  filter(row_number()==1)%>%      ## Select first line. We do not aim for anyone specifically -->Selecting the first
+  .$userId
+
+medium_user
+```
+
+Finally, for the light user (n<20) the userId is:
+
+```{r, echo=FALSE, eval = TRUE, warning=FALSE,message=FALSE }
+
+light_user<-train_set%>%
+  group_by(userId)%>%
+  summarize(n=n())%>%
+  filter(n<20)%>%
+  filter(row_number()==1)%>%    ## Select first line. We do not aim for anyone specifically -->Selecting the first
+  .$userId
+
+light_user
+```
+
+Their rating distribution is illustrated in the following plot:
+
+```{r, echo=FALSE, eval = TRUE, warning=FALSE,message=FALSE }
+
+
+t1<-train_set%>%
+  filter(userId==heavy_user)%>%
+  ggplot(aes(rating))+
+  geom_histogram(col="black")+
+  labs(title = "Heavy user rating distribution",
+       x = "Rating",
+       y = "Number of times")
+
+t2<-train_set%>%
+  filter(userId==medium_user)%>%
+  ggplot(aes(rating))+
+  geom_histogram(col="black")+
+  labs(title = "Medium user rating distribution",
+       x = "Rating",
+       y = "Number of times")
+
+
+t3<-train_set%>%
+  filter(userId==light_user)%>%
+  ggplot(aes(rating))+
+  geom_histogram(col="black")+
+  labs(title = "Light user rating distribution",
+       x = "Rating",
+       y = "Number of times")
+
+rm(heavy_user,medium_user,light_user)   ## Removing the ids; no longer required.
+
+ggarrange(t1,t2,t3,nrow = 3,ncol=1)
+rm(t1,t2,t3)            #removing plots; no longer required.
+
+```
+
+Based on the plots, we observe that these users behave differently (this is based on the seed; we have set the seed to 1 for the dataset creation, for reproducability); the light user appears to be neutral (or slightly positive), with his ratings being mainly 3, while also giving some perfect scores and some low scores. The medium user seems to have a more diverse rating behaviour (although on average he seems more neutral than positive or negative). Finally, the heavy user is positive, with very few ratings below 3.
+
+Therefore, we conclude that there is definately a relationship between the user and the ratings, and thus it will be tested in our models.
+
+## Movie analysis
+
+In this section, our objective is to analyze the relationship between movies and rating. From a logical point of view, we expect the movies to have a significant effect on the rating they receive; good quality movies should score higher than low quality movies.
+
+
+To begin our exploration,we create a histogram of the average rating across movies. 
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Average rating per movie plot.
+
+train_set %>%
+  group_by(movieId)%>%
+  summarize(rating=mean(rating))%>%
+  ggplot(aes(rating))+
+  geom_histogram(col="blue")+
+  labs( title = "Rating distribution across movies",
+        x = "Rating",
+        y = "Number of times")
+```
+
+Based on the histogram, we can see a wide distribution of ratings for the different movies. Intuitively, we know that some movies are more popular and some are less popular, so the rating distribution is aligned with our expectactions. 
+
+However, we should also examine the impact of the number of ratings to the rating distribution; are movies with a high number of ratings behaving similarly to a less mainstream movie? To answer this question, we start by plotting the histogram of the number of ratings, grouped by movie:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Average number of ratings per movie plot.
+
+train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n())%>%
+  ggplot(aes(count))+
+  geom_histogram(col="blue")+
+  labs( title = "Number of ratings distribution across movies",
+        x = "Number of ratings",
+        y = "Number of movies")
+```
+
+It appears that the majority of movies receive (relatively) few ratings, but there are some movies with more than 20.000 ratings. However, from this histogram, we cannot observe what exactly is happening at movies with a small number of ratings. For that reason, we create a table with the movies with the least number of ratings: 
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Average number of ratings per movie outliers (low count)
+train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n())%>%
+  arrange(count)%>%
+  filter(row_number()==1:5)%>%
+  kable(align="c") %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+```
+
+It seems that there are movies with just 1 rating. Such ratings are unlikely to be reliable. We can expect that such movies have a very narrow and specific target audience and people that watch them are biased in their rating (positively or negatively). To examine this, we are going to plot the average rating every movie has received against the number of ratings it has received. In the same graph, we are also plotting the average rating for all movies (red line).
+
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Comparing the average rating per movie with the number of ratings the movie received.
+train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n(),avg_rating=mean(rating))%>%
+  ggplot(aes(count,avg_rating))+
+  geom_point()+
+  geom_hline(yintercept = mean(train_set$rating),col="red")+
+  labs(title = "Average rating based on number of ratings for different movies",
+         x = "Number of ratings",
+         y = "Average rating")
+```
+
+Based on the graph, there is evidence that: 
+
+* Movies with **more ratings** (more people have seen them and rated them) appear to have an overall higher rating than the rest.In this case, we are probably talking about blockbuster movies (hence the number of ratings), which is why they are generally scoring higher than average.
+
+* Movies with **very few ratings** can have very good or very bad average ratings (range is [0.5,5]).Additionally, the spread of ratings is much larger in movies with a low number of ratings than it is in those with a higher number.
+
+
+* The distribution of rating is more wide at low numbers of ratings and becomes more narrow as we move to higher numbers. This is intuitive, as when the number of ratings increases, the average rating of that movie is more representative of the movie's appeal to the public (larger sample). 
+
+
+Continuing our analysis, we are going to explore separately the characteristics of ratings in movies in the low, medium high and very high categories. We define the categories as follows:
+
+* Low: Less than 10 ratings.
+* Medium: Less than 100 ratings, more than 10 ratings.
+* High: More than 100 ratings.
+* Very high: More than 5000 ratings.
+
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## For all the following graphs, first we group by movie and calculate the mean rating and number of ratings each movie recieved. We then filter based on the number of ratings (count) for each category and make a histogram of the ratings per category. In each histogram, we also plot the average rating of the category. We arrange all these 4 plots vertically to observe the differences in the distribution, and the mean value. We then remove the sub-plots we created:
+
+
+## Avg rating in low count movies (low<10)
+
+p_low<-train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n(),rating=mean(rating))%>%
+  filter(count<10)%>%
+  ggplot(aes(rating))+
+  geom_histogram()+
+  xlim(c(0.5, 5))+
+  geom_vline(aes(xintercept = mean(rating)),col='red',size=1.5)+
+  geom_text(aes(x=mean(rating)+0.35, label=paste0("Mean = ",  round(mean(rating),2)), y=30), colour="red", angle=0, size=2)+
+  labs(y = "Low")+
+   theme(axis.title.x=element_blank())
+
+## Avg rating in medium count movies (10<medium<100)
+p_med<-train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n(),rating=mean(rating))%>%
+  filter(count<100&count>10)%>%
+  ggplot(aes(rating))+
+  geom_histogram()+
+  xlim(c(0.5, 5))+
+  geom_vline(aes(xintercept = mean(rating)),col='yellow',size=1.5)+
+  geom_text(aes(x=mean(rating)+0.35, label=paste0("Mean = ",  round(mean(rating),2)), y=200), colour="yellow", angle=0, size=2)+
+  labs(y = "Medium")+
+   theme(axis.title.x=element_blank())
+
+## Avg rating in high count movies (high>100)
+
+p_high<-train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n(),rating=mean(rating))%>%
+  filter(count>100)%>%
+  ggplot(aes(rating))+
+  geom_histogram()  +
+  xlim(c(0.5, 5))+
+  geom_vline(aes(xintercept = mean(rating)),col='green',size=1.5)+
+  geom_text(aes(x=mean(rating)+0.35, label=paste0("Mean = ",  round(mean(rating),2)), y=300), colour="green", angle=0, size=2)+
+  labs(y = "High")+
+   theme(axis.title.x=element_blank())
+
+
+## Avg rating in extr. high count movies (extr. high>5000)
+p_vhigh<-train_set%>%
+  group_by(movieId)%>%
+  summarize(count=n(),rating=mean(rating))%>%
+  filter(count>5000)%>%
+  ggplot(aes(rating))+
+  geom_histogram()+ 
+  xlim(c(0.5, 5))+
+  geom_vline(aes(xintercept = mean(rating)),col='white',size=1.5)+
+  geom_text(aes(x=mean(rating)+0.3, label=paste0("Mean = ",  round(mean(rating),2)), y=20), colour="white", angle=0, size=2)+
+  labs(y = "Very high")+
+   theme(axis.title.x=element_blank())
+
+
+fig<-ggarrange(p_low,p_med,p_high,p_vhigh,nrow = 4,ncol=1,common.legend = TRUE)
+rm(p_low,p_med,p_high,p_vhigh)
+
+annotate_figure(fig, 
+                left = text_grob("Number of ratings",rot=90),
+                bottom= text_grob("Average Rating"))
+```
+
+
+In the plot we can clearly observe that when the number of ratings increases the mean value also increases. Simultaneously, the higher the number of ratings, the more close to each other the average ratings are. In the graph, we can see that the distribution is more wide in the upper chart (low,med) and becomes more narrow the further we move down. 
+
+Based on this analysis, the movie, as expected, appears to have a strong effect on the rating prediction, and thus it will be included in the model (data analysis section) to test if that is indeed the case. 
+
+\newpage
+
+## Genre Analysis
+
+In this section, we plan to explore the effect of the genres to a movie's rating. Since the genres in our dataset consist of a combination of unique genre categories, they can be either broken down to their individual components or each combination can be treated as a unique category.We will be exploring both options.
+
+For the first part of the analysis, will be treating each genre combination as a unique genre. The total number of unique genres is: 
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+
+length(unique(train_set$genres))
+
+```
+
+We begin with some interesting statistics about the genres. Since treating each unique combination as a unique genre seggregates the data to a large extent, we want to see if there are still sufficient data points in every genre. 
+
+Firstly, we print the genres with the most data points:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## How many observations do we have per genre? This assumes that we use each genre name as a new category, despite the fact that it can be broken to a combination of single genres.We will explore the latter in the second part of the analysis
+
+train_set%>%
+  group_by(genres)%>%
+  summarize(n=n())%>%
+  arrange(desc(n))%>%                           ## Genres with more observations on top.
+  filter(row_number()==1:5)%>%
+  kable(align=c("l","c")) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+```
+
+Secondly, we also print the genres with the least data points:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+
+train_set%>%
+  group_by(genres)%>%
+  summarize(n=n())%>%
+  arrange(n)%>%
+  filter(row_number()==1:5)%>%     ## Genres with least observations on top.
+  kable(align=c("l","c")) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+
+```
+
+It appears that many genres have a sufficient number of data points, but there are also genres that are only appear once or twice. If genre does have an effect on rating, then including genres with very few data points, might affect our analysis. We therefore decided to consider only genres with more than 10 data points.
+
+After removing genres with fewer than 10 data points, the remaining genres are:
+
+```{r, echo= FALSE, message=FALSE, warning=FALSE, eval = TRUE}
+## Filtering  OUT genres with less than 10 observations and counting number of remaining genres
+train_set%>%
+  group_by(genres)%>%
+  summarize(rating_g=mean(rating),number_of_observations=n())%>%
+  filter(number_of_observations>=10)%>% 
+  count(genres)%>%
+  summarize(sum(n))%>%
+  as.numeric()
+```
+
+
+We will now investigate the relationship between genre and rating. We start by plotting the average rating for all the remaining genres (more than 10 data points).
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Does genre play a role on average rating?
+
+train_set%>%
+  group_by(genres)%>%
+  summarize(rating_g=mean(rating),number_of_observations=n())%>%
+  filter(number_of_observations>=10)%>%       #We select only genres with more than 10 observations to have a meaningful sample
+  ggplot(aes(genres,rating_g))+
+  geom_point()+
+  labs(title = "Average rating per unique genre combination",
+       y = "Rating")+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())         # Removing axis elements in the graph, as there are too many genre combinations.
+```
+
+
+Based on the graph, genres seem to have an impact on the rating given to them. The ones included have a range between 2 and 4.5, for the average rating within the genre, and a very wide distribution amongst different genres.
+
+However, we also want to investigate the actual unique genres and how they affect the rating to a movie. We will attempt to extract the different (individual) components and investigate if we observe similar results in that case too.
+
+We start by splitting the genres to their individual components and extracting those components:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Creating a new dataframe with only the rating and the genre for faster calculations.
+genre<-train_set[,c("rating","genres")]
+
+##Splitting the genres by the character "|" and saving them in a list, since some genres contain more than 1 genre. 
+list<-str_split(genre$genres,"\\|")
+
+## Saving the content of the list into a char vector for easier manipulation.
+vec<-unlist(list)
+rm(list)
+
+## Unique genres and number of unique genres
+x_u<-unique(vec)
+rm(vec)
+x_u
+
+```
+
+
+The total number of unique genres is: 
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+length(x_u)
+```
+
+
+We will now calculate the average rating per genre component to see if they are significantly different from each other:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Creating a variable for each genre seperately, and setting it its value to 0. 
+## We start by creating an lapply function to set the values to 0, and utilizing the setnames we create one variable for each x_u (unique genre). Finally, we bind the columns with the existing genre dataframe. The final result is a dataframe with the existing 2 columns (rating, genre) and one dummy column per genre (+20) for a total of 22 columns. The column cells in each genre are at the moment set to 0, but we will manipulate them in a later step.
+genre<-cbind(genre, setNames( lapply(x_u, function(x) x=0), x_u) )
+
+
+## We are going to now indicate if a certain genre is present as a binary variable (x=1 if genres contain X genre, 0 otherwise) for all 20 genres (and columns). We are therefore creating a loop, and using the grep (get regular expression) to find pattern x_u[i] in the column "genres". If the result is TRUE we set the respective column to 1, otherwise we leave it as 0. Its important to underline that while i is looping between 1 and length(x_u) (which is 20), the column we are changing is the i+2 (since we already have the first 2 columns, i.e. rating and the genres).
+
+
+for (i in 1:length(x_u)){
+  genre[grep(x_u[i],genre$genres),i+2]<-1
+}
+
+## We now have a dummy variable matrix where each movie gets a 1 if it belongs to a certain unique genre, or 0 otherwise. 
+
+## We now want to calculate the scores per unique genre and see how they behave and if they are similar to what we experienced with the grouped data before.
+
+## Variable i for loop to calculate scores for all 20 variables
+i<-1:length(x_u)
+
+## Looping over i, and we calculate score as Rating*Dummy variable. IF dummy variable=1, then the score for that genre is set to the movie's rating, and 0 otherwise.
+k<-sapply(i,function(i){
+  score<-genre[,i+2]*genre[,"rating"]
+})
+
+## Since we have 0s in some cells, if we simply use a mean function, it will not correctly calculate the average rating per genre. Instead we only use the cells that do not have a 0 value (and we loop over the i index.)
+score_per_genre<-as.data.frame(sapply(i,function(i){mean(k[k[,i]!=0,i])}))
+
+## Changing the column name for the average rating
+colnames(score_per_genre)<-"Averate rating"
+
+## Creating a 2nd column for the genre category
+score_per_genre$Category<-x_u
+
+## Plotting the average score per genre and the overall average
+score_per_genre%>%
+  ggplot(aes(Category,`Averate rating`))+
+  geom_point()+
+  ylim(c(0.5, 5))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  geom_hline(yintercept = mean(train_set$rating),col="red")
+
+## Removing the objects created.
+rm(score_per_genre,k,i,x_u)
+```
+
+
+We observe that different genres have different average ratings but the range of those ratings is not as extreme as it was when the combined genre was treated as a unique category, and thus it might not be as effective as the unique genre combinations. Therefore, we will test the genre effect on the movie rating prediction, but we will treat each combination of genres as a unique category (method 1).
+
+## Rating analysis
+
+In this last section of our exploratory data analysis, we will examine how our dependent variable behaves. 
+
+For this reason we plot the histogram of rating across all movies and users:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Plotting a histogram of the ratings.
+
+train_set%>%
+  ggplot()+
+  geom_histogram(aes(rating))
+```
+
+Based on this histogram alone, we can observe two interesting features of the rating: 
+
+* The rating given by users is in multiples of 0.5 and not continuous. 
+
+* The minimum score is 0.5 (and not 0 as expected), while the maximum is 5. This means that a very easy way to improve predictions in the data analysis chapter is that every predicted value, which is less than 0.5, is set to 0.5 and every predicted value above 5 is set to 5.
+
+\newpage
+# Analysis: Model building and testing
+
+In this chapter, we build on the results of our exploratory data analysis and start developing models to predict the movie ratings, based on different characteristics.
+
+Firstly, we have removed the title field from our dataset, as we could not identify a clear usecase for including it.
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Removing the title from the dataset, as it will not be used.
+train_set<-train_set%>%
+   select(-title)
+```
+
+For the accuracy metric, we will be using the root mean squared error (RMSE).
+
+## Model 1: Naive prediction
+
+For our first model, we are going to use a naive rule to generate predictions: every movie gets rated equal to the average rating of all movies. We first calculate the average rating and assign it to the variable mu (will be used in other models too) and then calculate the RMSE of our naive model as:
+
+$\hat{Y} = mu$
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Mean value for rating
+mu <- mean(train_set$rating) 
+```
+
+The RMSE of our model is:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Model 1
+## Naive: Assume all movies get an average rating
+rmse_naive<-RMSE(test_set$rating,mu)    ##1.059
+   
+
+rmse_naive
+```
+
+
+## Model 2: Adding a time bias to the model
+
+For our second model, we are going to include the time-bias, we observed in our EDA. For this, we first mutate the timestamp into a year variable and then fit a loess line to smoothen it. The time-bias is the smoothened value of the loess line, for each year.
+To utilize it in our model, we calculate our prediction as follows:
+
+$\hat{Y_{t}} = mu + f(d_{t})$ , in which $f(d_{t})$ is the smoothened curve fitted in the date data.
+
+In the model, for each prediction we need to generate, we subtract from the mean value the time bias (which is calculated based on the date the rating was assigned). 
+
+The RMSE of our 2nd model is:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Adding the time effect
+
+## Adding a year variable and calculating the UNSMOOTHENED time effect bt as bt= Y-mu
+time_bias<-train_set%>%
+  mutate(year=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="year"))%>%
+  group_by(year)%>%
+  summarize(rating=mean(rating-mu))       ##Time based bias
+
+##fitting a loess (smoothened) line for the time object
+
+l<-loess(time_bias$rating~as.numeric(time_bias$year))         
+time_bias$rating<-l$fitted
+names(time_bias)<-c("year","Timed_avg")
+rm(l)
+
+## adding the year variable to the train set
+train_set<-train_set%>%
+  mutate(year=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="year"))
+
+##Joining data frames by the year variable to get the loess smoothened time-bias
+train_set<-train_set%>%
+  left_join(time_bias,by="year")
+
+##Joining also for the test set to estimate accuracy
+test_set<-test_set%>%
+  mutate(year=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="year"))%>%
+  left_join(time_bias,by="year")
+
+##In case a new year is provided in the test set, where we do not have observations in the train set, we set the bias to 0, as we cannot measure it.
+
+test_set$Timed_avg[is.na(test_set$Timed_avg)]<-0
+
+##Prediction  y^=mu+bt
+y_hat<-test_set$Timed_avg+mu
+
+## Accuracy model 2
+rmse_time_naive<-RMSE(test_set$rating,y_hat)        ## 1.058529
+rmse_time_naive                                  
+```
+
+Compared to our first model, We observe a very small improvement of 0.5%. We should note that for movies with years that do not appear in the dataset, we are setting the time bias to 0, as we cannot measure it. In the following table, all models and their errors are summarized:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+Results_train<-data.frame(method=c("Naive","Time bias"), RMSE=c(rmse_naive,rmse_time_naive))
+Results_train%>%
+   kable(align=c("l","c")) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+
+```
+
+## Model 3: Adding a movie bias to the model
+
+For our third model, we are going to build on model 2 and add the movie effect, which appeared to be quite strong in our EDA. Therefore, we begin by calculating the movie bias in our train set. The movie bias for each movie i is the average of all ratings for that movie minus the time bias of each of those ratings.
+
+We calculate our predictions as follows:
+
+$\hat{Y_{t,i}} = mu + f(d_{t}) + b_{i}$
+
+The RMSE of our new model is:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Adding the movie effect
+
+## Calculating the movie bias bi as bi=Y-mu-bt          grouped per movie
+movie_bias<-train_set%>%
+  group_by(movieId)%>%
+  summarize(bi=mean(rating-mu-Timed_avg))
+
+
+##Joining the data frame with the train_set
+train_set<-train_set%>%
+  left_join(movie_bias,by = "movieId")
+
+
+## Joining the data_frame with the test_set to make the prediction
+
+test_set<-test_set%>%
+  left_join(movie_bias,by="movieId")
+
+
+test_set$bi[is.na(test_set$bi)]<-0          #we set the movie bias to 0 if its a new movie, as we cannot estimate the bias then.
+
+y_hat<-mu+test_set$Timed_avg+test_set$bi
+rmse_time_movie<-RMSE(y_hat,test_set$rating)      ## 0.9428478
+rmse_time_movie
+
+## We further improved our accuracy by 10.9%
+```
+
+
+Compared to our previous model, We observe a substantial improvement of 10.9%. We should note that for new movies (no reviews on those movies) that do not appear in the dataset, we are setting the movie bias to 0, as we cannot measure it. In the following table, all models and their errors are summarized:
+
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+
+Results_train<-data.frame(method=c("Naive","Time bias","Time bias+Movie bias"), RMSE=c(rmse_naive,rmse_time_naive,rmse_time_movie))
+Results_train%>%
+   kable(align=c("l","c")) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+
+```
+
+
+## Model 4: Adding a user-bias to the model
+
+For our fourth model, since model 3 was superior to the rest (and therefore the time bias was beneficial for prediction), we are going to build on top of it and add a user bias. To calculate the user bias, for each user we will be computing the average rating after subtracting the time and movie bias that we previously calculated.
+
+We calculate our predictions as follows:
+
+$\hat{Y_{t,i,u}} = mu + f(d_{t}) + b_{i}+b_{u}$
+
+The RMSE of our new model is:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Including the user bias in the model: We calculate the user bias as bu=Y-mu-bi-bt grouped per user
+
+user_bias <- train_set %>% 
+  group_by(userId) %>%
+  summarize(bu = mean(rating - mu - bi-Timed_avg))
+
+
+##Joining the data frame with the train_set
+train_set<-train_set%>%
+  left_join(user_bias,by="userId")
+
+
+## We combine the dataframe with our test_set to make our prediction
+test_set<-test_set%>%
+  left_join(user_bias,by="userId")
+
+
+test_set$bu[is.na(test_set$bu)]<-0                     ## We set the bu for new users, as the bias of that user cannot be measured
+
+y_hat<-mu+test_set$bu+test_set$bi+test_set$Timed_avg
+rmse_time_movie_user<-RMSE(y_hat,test_set$rating)             ## 0.8650181
+rmse_time_movie_user
+
+
+## We further improved our accuracy by 8.2%
+```
+
+Compared to the third model, we observe an improvement of 8.2%. We should note that for new users (no reviews yet) that do not appear in the dataset, we are setting the user bias to 0, as we cannot measure it. In the following table, all models and their errors are summarized:
+
+
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+
+
+Results_train<-data.frame(method=c("Naive","Time bias","Time bias+Movie bias","Time bias + Movie bias + User bias"), RMSE=c(rmse_naive,rmse_time_naive,rmse_time_movie,rmse_time_movie_user))
+Results_train%>%
+   kable(align=c("l","c")) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+
+```
+
+## Model 5: Adding the genre bias to the model
+
+For our last model, we are again going to build on the best model so far: Model 4. We are now going to add the genre effect to our existing model. At this stage, as a reminder, we have decided at the end of the EDA, to treat each genre combination as a unique category. To calculate the genre bias, first we are filtering only the genres that have more than 10 observations. Subsequently, we are calculating the genre bias as the average rating per user after subtracting the time, movie and user biases.
+
+We calculate our predictions as follows:
+
+$\hat{Y_{t,i,u,g}} = mu + f(d_{t}) + b_{i}+b_{u}+b_{g}$
+
+The RMSE of our new model is:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+## Adding a genre effect: bg=Y-mu-bt-bi-bu
+
+
+genre_bias<-train_set%>%
+  group_by(userId,genres)%>%
+  filter(n()>10)%>%    # To have a meaningful gender bias, we only select user that have seen that type of genre more than 10 times.
+  summarize(bg=mean(rating-mu-bi-bu))
+
+train_set<-train_set%>%
+  left_join(genre_bias,by=c("userId"="userId", "genres"="genres"))
+
+
+test_set<-test_set%>%
+  left_join(genre_bias,by=c("userId"="userId", "genres"="genres"))
+
+test_set$bg[is.na(test_set$bg)]<-0
+
+y_hat<-mu+test_set$bi+test_set$bu+test_set$bg+test_set$Timed_avg
+rmse_genre_time_user_movie<-RMSE(y_hat,test_set$rating)
+rmse_genre_time_user_movie                            ##0.8631007
+
+## We improved our accuracy by 0.2%
+
+```
+
+We observe a small improvement of 0.2%. We should note that for new genres that do not appear in the dataset, we are setting the genre bias to 0, as we cannot measure it. In the following table, all models and their errors are summarized:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+
+
+
+Results_train<-data.frame(method=c("Naive","Time bias","Time bias+Movie bias","Time bias + Movie bias + User bias","Time bias + Movie bias + User bias + Genre bias"), RMSE=c(rmse_naive,rmse_time_naive,rmse_time_movie,rmse_time_movie_user,rmse_genre_time_user_movie))
+Results_train%>%
+   kable(align=c("l","c")) %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+
+```
+
+
+\newpage
+
+# Results: Model assessment & validation
+
+In this section, we will be using the best model of the previous chapter to validate its performance in the validation set.
+
+The best performing model of chapter 5 is the one with all 4 parameters (time bias, user bias, movie bias and genre bias). To calculate the final RMSE, first will be joining the validation set with the four bias tables we generated in the train set and then predict based on the following formula:
+
+$\hat{Y_{t,i,u,g}} = mu + f(d_{t}) + b_{i}+b_{u}+b_{g}$
+
+Note that for any unobserved years, users, movies or genres we set the appropriate bias to 0. 
+
+Finally, we also improve our predictions with the rule defined in the Rating Analysis of chapter 4: if a rating is below 0.5 we set it to 0.5 and if its above 5, we set it to 5.
+
+The validation RMSE of our model is:
+
+```{r, echo= FALSE,message=FALSE, warning=FALSE, eval = TRUE}
+#Validation check and final RMSE calculation
+
+##Joining validation set with bias tables generated in test set
+validation<-validation%>%
+  left_join(genre_bias,c("userId"="userId", "genres"="genres"))%>%
+  left_join(movie_bias,by="movieId")%>%
+  left_join(user_bias,by="userId")%>%
+  mutate(year=round_date(as.POSIXct(timestamp,origin="1970-01-01",tz="GMT"),unit="year"))%>%
+  left_join(time_bias,by="year")
+
+
+## For any new years, movies, users or genres (not in the train set, i.e. cold start) we set the bias to 0.
+
+validation$Timed_avg[is.na(validation$Timed_avg)]<-0
+validation$bg[is.na(validation$bg)]<-0
+validation$bu[is.na(validation$bu)]<-0
+validation$bi[is.na(validation$bi)]<-0
+
+
+##Y estimation: y=mu+bt+bi+bu+bg
+
+y_h<-mu+validation$Timed_avg+validation$bu+validation$bg+validation$bi
+
+## Fixing values below 0.5 and above 5, as described in data exploration 5) Rating analysis
+y_h<-ifelse(y_h<0.5,0.5,y_h)
+y_h<-ifelse(y_h>5,5,y_h)
+
+r<-RMSE(y_h,validation$rating)
+r                              ## Final RMSE: 0.8647722 
+```
+
+The RMSE of our model appears to be in line with what was tested in previous sections and has improved by 20% over our initial estimation (naive model).
+
+\newpage
+# Conclusion
+
+In this chapter, we will be discussing our methods, models and results, explain some of the limitations of our research and conclude this project with some directions for future research.
+
+## Discussion of results
+
+In chapter 5, we have developed five models that incorporate different factors into the design. More specifically, we have studied the effects of movie-bias, user-bias, time-bias and genre-bias on the rating prediction. Each of the four factors appears to be beneficial in predicting the final rating, and the factors were studied on an additive basis: each factor was added to the best current model and the new model's performance was benchmarked against the original. If an improvement was found, the factor was considered beneficial and it was utilized in all subsequent models.
+
+From our analysis, we can see that the variable, which had the biggest impact in the RMSE reduction, was the movie-bias. From an empirical point of view, we can see why this is the case: the rating of the moving is depending on the actual movie; if a movie is of bad quality, this is reflected on the rating and vice versa. On the other hand, the least effective variable was the time bias. While it is true that some periods are associated with better quality movies, this effect is very minor (slightly better than the naive model). We should note that from a percentage (%) improvement point of view, the weakest variable is the genre-bias; however, this was the last variable added to the model, and thus a lot of variability was already accounted for by the other three factors. For this reason, we are considering the improvement done to RMSE in absolute terms ($Improvement=RMSE_{old}-RMSE_{new}$).
+
+Overall, the best performing model had a substantial improvement (20%) over our first benchmark model and predicts with high accuracy the rating in the validation set (RMSE=0.8647).
+
+## Limitations
+
+The algorithm and research presented, yielded some interesting results but are not without limitations. To begin with, for estimating the different types of biases, we calculated the average (per user/movie/year/genre); however, we could potentially use alternative ways to estimate better values for them. Furthermore, due to the extreme computational times, no sophisticated machine learning algorithms were used. A solution for this problem could be a virtual machine, which was not utilized in this research. Finally, for the genre effects, in the case of individual genres (which was deemed less beneficial for modelling purposes) the explicit relationship between genres was not studied. 
+
+##Further research
+
+In this project, several methods for creating a movie recommendation system have been studied, with decent results. In future research, new methods for estimating the different biases should be examined and benchmarked against the original models. Additionally, we propose a more in-depth investigation of the genre effect, to identify some overlaps between genre components. Finally, the utilization of virtual machines and more intelligent ML methods can also be beneficial for building more advanced recommendation systems.
+
+\newpage
+
+# References
